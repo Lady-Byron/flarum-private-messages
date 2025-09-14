@@ -1,6 +1,5 @@
 import app from 'flarum/forum/app';
 import { extend } from 'flarum/common/extend';
-
 import IndexPage from 'flarum/forum/components/IndexPage';
 import NotificationGrid from 'flarum/forum/components/NotificationGrid';
 
@@ -17,8 +16,8 @@ import NewPrivateMessageNotification from './components/NewPrivateMessageNotific
 import addConversationsDropdown from './addConversationsDropdown';
 import { getNeoncubePrivateMessagesColors } from '../admin-forum-common';
 
-app.initializers.add('neoncube-private-messages', () => {
-  // 模型注册
+app.initializers.add('neoncube-private-messages', (app) => {
+  // 模型绑定
   app.store.models.messages = Message;
   app.store.models.conversations = Conversation;
   app.store.models.conversation_users = ConversationUser;
@@ -26,15 +25,13 @@ app.initializers.add('neoncube-private-messages', () => {
   User.prototype.conversations = Model.hasMany('conversations');
   User.prototype.unreadMessages = Model.attribute('unreadMessages');
 
-  // 通知卡片组件 —— 兼容旧式对象注册
-  app.notificationComponents = app.notificationComponents || {};
+  // 通知卡片（沿用原来的旧式对象注册）
   app.notificationComponents.newPrivateMessage = NewPrivateMessageNotification;
 
   // 路由
   app.routes.conversations = { path: '/conversations', component: ConversationsPage };
   app.routes.messages = { path: '/conversations/:id', component: ConversationsPage };
 
-  // 会话工具入口
   addConversationsDropdown();
 
   // 注入颜色变量
@@ -48,8 +45,8 @@ app.initializers.add('neoncube-private-messages', () => {
     cssStyle.setProperty('--neoncube-private-messages-recipient-text-color', colors.recipientTextColor);
   });
 
-  // pusher：未读+1（兼容不同模型实现）
-  extend(IndexPage.prototype, 'oncreate', function () {
+  // Pusher 未读数 +1（更稳的写法）
+  extend(IndexPage.prototype, 'oncreate', () => {
     if (app.pusher) {
       app.pusher.then((object) => {
         const channels = object.channels;
@@ -57,8 +54,8 @@ app.initializers.add('neoncube-private-messages', () => {
           channels.user.bind('newMessage', () => {
             const user = app.session.user;
             if (!user) return;
-            const cur = (typeof user.unreadMessages === 'function' ? user.unreadMessages() : 0) || 0;
 
+            const cur = (typeof user.unreadMessages === 'function' ? user.unreadMessages() : 0) || 0;
             if (typeof user.pushAttributes === 'function') {
               user.pushAttributes({ unreadMessages: cur + 1 });
             } else if (typeof user.unreadMessages === 'function') {
@@ -71,7 +68,7 @@ app.initializers.add('neoncube-private-messages', () => {
     }
   });
 
-  extend(IndexPage.prototype, 'onremove', function () {
+  extend(IndexPage.prototype, 'onremove', () => {
     if (app.pusher) {
       app.pusher.then((object) => {
         const channels = object.channels;
@@ -82,22 +79,13 @@ app.initializers.add('neoncube-private-messages', () => {
     }
   });
 
-  /**
-   * 通知设置行（NotificationGrid）
-   * - 关键：行键必须与 PHP Blueprint::getType() 完全一致：'newPrivateMessage'
-   * - 该版本要求使用 `label` 字段显示文字；`name` 会被忽略
-   * - 渠道（alert/email）是否可用由后端 Extend\Notification 决定
-   */
-  const addGridRow = (items) => {
-    if (!items.has || !items.has('newPrivateMessage')) {
-      items.add('newPrivateMessage', {
-        label: app.translator.trans('neoncube-private-messages.forum.notifications.new_private_message'),
-        icon: 'fas fa-comment-alt',
-      });
-    }
-  };
-
-  // 兼容不同版本：同时挂到 class 和 prototype
-  extend(NotificationGrid, 'notificationTypes', addGridRow);
-  extend(NotificationGrid.prototype, 'notificationTypes', addGridRow);
+  // NotificationGrid：关键修复 —— 显式声明可用渠道
+  extend(NotificationGrid.prototype, 'notificationTypes', (items) => {
+    // 不再前端 gate；是否允许发邮件由后端权限控制，Grid 只负责渲染行
+    items.add('newPrivateMessage', {
+      label: app.translator.trans('neoncube-private-messages.forum.notifications.new_private_message'),
+      icon: 'fas fa-comment-alt',
+      methods: ['alert', 'email'], // ★ 告诉 Grid 这条类型支持这两列 → 生成真正的输入框
+    });
+  });
 });
