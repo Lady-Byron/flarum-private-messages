@@ -1,0 +1,116 @@
+name: build-dist
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-dist-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # 防止 bot 自触发死循环；手动触发时总是允许
+    if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mark repo as safe directory (for git)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: js/package-lock.json
+
+      - name: Install deps
+        working-directory: js
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm i
+          fi
+
+      - name: Build
+        working-directory: js
+        run: npm run build
+
+      - name: Assert dist produced
+        run: |
+          echo "== List js/dist =="
+          ls -lah js/dist || true
+          test -f js/dist/forum.js || { echo "::error::js/dist/forum.js not found after build"; exit 1; }
+
+      - name: Commit dist (force add even if ignored)
+        env:
+          CI_COMMIT_MSG: "build: update dist [skip ci]"
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 强制添加以忽略 .gitignore 的干扰
+          git add -f js/dist
+          if ! git diff --cached --quiet; then
+            git commit -m "$CI_COMMIT_MSG"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Make pack (tar.gz)
+        id: pack
+        run: |
+          set -euo pipefail
+
+          # 读取 composer.json 的包名（如 neoncube/flarum-private-messages）
+          EXT_NAME=$(jq -r '.name // "forked/flarum-private-messages"' composer.json)
+          SHORT_SHA=$(printf "%s" "${GITHUB_SHA}" | cut -c1-7)
+
+          # 版本号优先用最近 tag，否则用分支名+sha
+          if git describe --tags --exact-match >/dev/null 2>&1; then
+            VERSION=$(git describe --tags --exact-match)
+          else
+            VERSION="${GITHUB_REF_NAME:-dev}-${SHORT_SHA}"
+          fi
+
+          PKG_BASENAME="${EXT_NAME##*/}-${VERSION}"
+          PKG_DIR="pack/${PKG_BASENAME}"
+
+          mkdir -p "${PKG_DIR}"
+
+          # 只拷贝发包所需文件/目录；不带 node_modules/vendor/js/src
+          rsync -a --prune-empty-dirs \
+            --include='/composer.json' \
+            --include='/composer.lock' \
+            --include='/LICENSE*' \
+            --include='/README*' \
+            --include='/extend.php' \
+            --include='/src/***' \
+            --include='/migrations/***' \
+            --include='/resources/***' \
+            --include='/locale/***' \
+            --include='/less/***' \
+            --include='/js/dist/***' \
+            --exclude='*' \
+            ./ "${PKG_DIR}/"
+
+          tar -C pack -czf "${PKG_BASENAME}.tar.gz" "${PKG_BASENAME}"
+          echo "pkg=${PKG_BASENAME}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flarum-extension-pack
+          path: ${{ steps.pack.outputs.pkg }}
+          if-no-files-found: error
