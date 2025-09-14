@@ -15,14 +15,15 @@ use Neoncube\FlarumPrivateMessages\Notifications\NewPrivateMessageBlueprint;
 return [
     (new Extend\Frontend('admin'))
         ->js(__DIR__ . '/js/dist/admin.js'),
+
     (new Extend\Frontend('forum'))
         ->js(__DIR__ . '/js/dist/forum.js')
         ->css(__DIR__ . '/resources/less/extension.less')
         ->route('/conversations/{id}', 'neoncube-private-messages.messages')
         ->route('/conversations', 'neoncube-private-messages.conversations'),
+
     new Extend\Locales(__DIR__ . '/resources/locale'),
-    // (new Extend\Model(User::class))
-    //     ->hasMany('conversations', ConversationUser::class, 'user_id'),
+
     (new Extend\Routes('api'))
         ->get('/neoncube-private-messages/conversations', 'neoncube-private-messages.conversations.index', Controllers\ListConversationsController::class)
         ->get('/neoncube-private-messages/messages/{id}', 'neoncube-private-messages.messages.list', Controllers\ListMessagesController::class)
@@ -31,14 +32,13 @@ return [
         ->post('/neoncube-private-messages/messages/typing', 'neoncube-private-messages.message.typing', Controllers\TypingPusherController::class)
         ->post('/neoncube-private-messages/messages/read', 'neoncube-private-messages.message.read', Controllers\ReadMessageController::class)
         ->delete('/neoncube-private-messages/messages{id}', 'neoncube-private-messages.messages.delete', Controllers\DeleteMessageController::class)
-        //->patch('/messages/{id}', 'messages.update', Controllers\UpdateMessageController::class)
-        //->delete('/messages/{id}', 'messages.delete', Controllers\DeleteMessageController::class)
         ->get('/neoncube-private-messages/conversations/{id}', 'neoncube-private-messages.conversations.show', Controllers\ShowConversationController::class),
 
     (new Extend\ApiSerializer(ForumSerializer::class))
         ->attribute('canMessage', function (ForumSerializer $serializer) {
             return $serializer->getActor()->can('startConversation');
         }),
+
     (new Extend\ApiSerializer(ForumSerializer::class))
         ->attribute('neoncubePrivateMessagesAllowUsersToReceiveEmailNotifications', function (ForumSerializer $serializer) {
             return $serializer->getActor()->can('neoncube-private-messages.allowUsersToReceiveEmailNotifications');
@@ -79,23 +79,17 @@ return [
         ->serializeToForum('neoncubePrivateMessagesSenderTextColor', 'neoncube-private-messages.sender_text_color', function ($value) {
             return $value;
         }),
-    // (new Extend\Settings())
-    //     ->serializeToForum('neoncubePrivateMessagesShowReadReceipts', 'neoncube-private-messages.show_read_receipts', function ($value) {
-    //         return (bool)$value;
-    //     }),
-    // (new Extend\ApiSerializer(CurrentUserSerializer::class))
-    //     ->hasMany('conversations', ConversationRecipientSerializer::class),
 
-    // (new Extend\ApiController(Controller\ListUsersController::class))
-    //     ->addInclude('conversations'),
-    // (new Extend\ApiController(Controller\ShowUserController::class))
-    //     ->addInclude('conversations'),
-    // (new Extend\ApiController(Controller\CreateUserController::class))
-    //     ->addInclude('conversations'),
-    // (new Extend\ApiController(Controller\UpdateUserController::class))
-    //     ->addInclude('conversations'),
+    // ✅ 注册通知类型 & 渠道：允许 alert（站内通知）+ email
     (new Extend\Notification())
-        ->type(NewPrivateMessageBlueprint::class, MessageSerializer::class, ['email']),
+        ->type(NewPrivateMessageBlueprint::class, MessageSerializer::class, ['alert', 'email']),
+
+    // ✅ 为“有人私信我”设置默认偏好（只对尚未存过偏好的用户生效）
+    // notify_* → 站内通知（小铃铛）；email_* → 邮件
+    (new Extend\User())
+        ->registerPreference('notify_newPrivateMessage', 'boolval', true)   // 默认开启站内通知
+        ->registerPreference('email_newPrivateMessage', 'boolval', true),  // 邮件如需默认开，改为 true
+
     (new Extend\View)
         ->namespace('flarum-private-messages', __DIR__.'/views'),
 ];
