@@ -18,11 +18,17 @@ class ConversationSerializer extends AbstractSerializer
         }
 
         return [
-            'status' => json_decode($conversation->status),
+            // 容错：NULL/'' 时返回空数组，避免 PHP 8.1+ deprecation & headers already sent
+            'status' => json_decode($conversation->status ?? '[]', true) ?? [],
+
             'createdAt' => $this->formatDate($conversation->created_at),
-            'updatedAt' => $this->formatDate($conversation->created_at),
+            // 可选修正：优先使用 updated_at
+            'updatedAt' => $this->formatDate($conversation->updated_at ?? $conversation->created_at),
+
             'totalMessages' => $conversation->total_messages,
             'notNew' => (bool) $conversation->notNew,
+
+            // 原写法保留（最小改动）；如需性能更好可改为 ->where('is_seen', false)->count()
             'unReadCount' => $conversation->messages()
                 ->get()
                 ->filter(function ($message) {
